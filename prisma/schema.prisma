@@ -1,0 +1,377 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN
+  TEACHER
+  STUDENT
+}
+
+enum AIMessageRole {
+  USER
+  ASSISTANT
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  username     String   @unique
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(STUDENT)
+  avatar       String?
+  /// Akun dinonaktifkan admin: login & seluruh sesi ditolak.
+  isActive     Boolean  @default(true)
+  /// Dimasukkan ke JWT; dinaikkan saat role berubah / akun dinonaktifkan
+  /// agar seluruh sesi lama langsung tidak berlaku.
+  tokenVersion Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  pretestAttempts  PretestAttempt[]
+  posttestAttempts PosttestAttempt[]
+  progresses       Progress[]
+  videoProgresses  VideoProgress[]
+  conversations    AIConversation[]
+  taughtCourses    CourseTeacher[]
+  enrolledCourses  CourseStudent[]
+  teacherProfile   TeacherProfile?
+  studentProfile   StudentProfile?
+  auditLogs        AuditLog[]      @relation("AuditActor")
+  passwordResetTokens PasswordResetToken[]
+
+  @@index([role])
+}
+
+/// Token sekali pakai untuk pemulihan kata sandi; token mentah tidak pernah disimpan.
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Data tambahan guru (dibuat otomatis saat akun guru dibuat).
+model TeacherProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  teacherCode String   @unique
+  subject     String   @default("Biologi")
+  bio         String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// Data tambahan siswa (dibuat otomatis saat registrasi/admin membuat siswa).
+model StudentProfile {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  studentCode String    @unique
+  className   String    @default("Belum ditentukan")
+  enrolledAt  DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// Log audit aktivitas administratif (tanpa password/token/sensitif).
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  targetType String
+  targetId   String?
+  detail     Json?
+  createdAt  DateTime @default(now())
+
+  @@index([action])
+  @@index([targetId])
+  @@index([createdAt])
+}
+
+model Course {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  teachers CourseTeacher[]
+  students CourseStudent[]
+}
+
+model CourseTeacher {
+  id        String @id @default(cuid())
+  courseId  String
+  teacherId String
+  course    Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  teacher   User   @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, teacherId])
+  @@index([teacherId])
+}
+
+model CourseStudent {
+  id         String   @id @default(cuid())
+  courseId   String
+  studentId  String
+  enrolledAt DateTime @default(now())
+  course     Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  student    User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, studentId])
+  @@index([studentId])
+}
+
+model Material {
+  id                String   @id @default(cuid())
+  order             Int      @unique
+  title             String
+  slug              String   @unique
+  description       String   @db.Text
+  content           String   @db.Text
+  learningObjectives String  @db.Text
+  thumbnail         String?
+  fileName          String?
+  fileUrl           String?
+  fileType          String?
+  published         Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  videos      Video[]
+  progresses  Progress[]
+  conversations AIConversation[]
+}
+
+model Video {
+  id          String   @id @default(cuid())
+  materialId  String
+  material    Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  title       String
+  description String?  @db.Text
+  videoUrl    String
+  thumbnail   String?
+  duration    String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  progresses VideoProgress[]
+
+  @@index([materialId])
+}
+
+model VideoProgress {
+  id        String   @id @default(cuid())
+  userId    String
+  videoId   String
+  completed Boolean  @default(false)
+  watchedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, videoId])
+  @@index([userId])
+}
+
+model Pretest {
+  id          String   @id @default(cuid())
+  title       String   @default("Pretest Biologi SMA")
+  description String?  @db.Text
+  published   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  questions PretestQuestion[]
+  attempts  PretestAttempt[]
+}
+
+model PretestQuestion {
+  id           String   @id @default(cuid())
+  pretestId    String
+  pretest      Pretest  @relation(fields: [pretestId], references: [id], onDelete: Cascade)
+  questionText String   @db.Text
+  explanation  String?  @db.Text
+  order        Int
+  points       Int      @default(4)
+
+  options PretestOption[]
+  answers PretestAnswer[]
+
+  @@index([pretestId, order])
+}
+
+model PretestOption {
+  id         String          @id @default(cuid())
+  questionId String
+  question   PretestQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  optionText String          @db.Text
+  isCorrect  Boolean         @default(false)
+
+  @@index([questionId])
+}
+
+model PretestAttempt {
+  id           String    @id @default(cuid())
+  userId       String
+  pretestId    String
+  score        Float
+  correctCount Int
+  wrongCount   Int
+  percentage   Float
+  startedAt    DateTime  @default(now())
+  completedAt  DateTime  @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pretest      Pretest   @relation(fields: [pretestId], references: [id], onDelete: Cascade)
+  answers      PretestAnswer[]
+
+  @@index([userId])
+  @@index([pretestId])
+}
+
+model PretestAnswer {
+  id               String          @id @default(cuid())
+  attemptId        String
+  questionId       String
+  selectedOptionId String?
+  isCorrect        Boolean         @default(false)
+  attempt          PretestAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question         PretestQuestion @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@index([attemptId])
+}
+
+model Posttest {
+  id          String   @id @default(cuid())
+  title       String   @default("Posttest Biologi SMA")
+  description String?  @db.Text
+  published   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  questions PosttestQuestion[]
+  attempts  PosttestAttempt[]
+}
+
+model PosttestQuestion {
+  id           String    @id @default(cuid())
+  posttestId   String
+  posttest     Posttest  @relation(fields: [posttestId], references: [id], onDelete: Cascade)
+  questionText String    @db.Text
+  explanation  String?   @db.Text
+  order        Int
+  points       Int       @default(4)
+
+  options PosttestOption[]
+  answers PosttestAnswer[]
+
+  @@index([posttestId, order])
+}
+
+model PosttestOption {
+  id         String           @id @default(cuid())
+  questionId String
+  question   PosttestQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  optionText String           @db.Text
+  isCorrect  Boolean          @default(false)
+
+  @@index([questionId])
+}
+
+model PosttestAttempt {
+  id           String   @id @default(cuid())
+  userId       String
+  posttestId   String
+  score        Float
+  correctCount Int
+  wrongCount   Int
+  percentage   Float
+  startedAt    DateTime @default(now())
+  completedAt  DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  posttest     Posttest @relation(fields: [posttestId], references: [id], onDelete: Cascade)
+  answers      PosttestAnswer[]
+
+  @@index([userId])
+  @@index([posttestId])
+}
+
+model PosttestAnswer {
+  id               String          @id @default(cuid())
+  attemptId        String
+  questionId       String
+  selectedOptionId String?
+  isCorrect        Boolean         @default(false)
+  attempt          PosttestAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question         PosttestQuestion @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@index([attemptId])
+}
+
+model Progress {
+  id                 String   @id @default(cuid())
+  userId             String
+  materialId         String
+  progressPercentage Int      @default(0)
+  completed          Boolean  @default(false)
+  lastAccessedAt     DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  material           Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, materialId])
+  @@index([userId])
+}
+
+model AIConversation {
+  id         String    @id @default(cuid())
+  userId     String
+  materialId String?
+  title      String    @default("Percakapan Baru")
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  material   Material? @relation(fields: [materialId], references: [id], onDelete: SetNull)
+  messages   AIMessage[]
+
+  @@index([userId])
+}
+
+model AIMessage {
+  id             String         @id @default(cuid())
+  conversationId String
+  role           AIMessageRole
+  content        String         @db.Text
+  createdAt      DateTime       @default(now())
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}
+
+model ManualBook {
+  id          String   @id @default(cuid())
+  title       String
+  description String?  @db.Text
+  fileName    String?
+  fileUrl     String?
+  fileType    String?
+  version     String   @default("1.0")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build output
+dist/
+build/
+
+# Vercel
+.vercel/
+
+# OS files
+.DS_Store
+Thumbs.db
+# TypeScript
+*.tsbuildinfo
+# Private demo accounts
+docs/akun-demo-siswa.csv
+docs/akun-demo.xlsx
+outputs/2026-11-01-teacher-accounts/
